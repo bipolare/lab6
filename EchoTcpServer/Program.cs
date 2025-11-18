@@ -4,14 +4,42 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Linq; // Додано для використання Linq у UdpTimedSender
+
+// --- ТОЧКА ВХОДУ ДЛЯ КОНСОЛЬНОГО ЗАСТОСУНКУ (ВИПРАВЛЕННЯ CS5001) ---
+try
+{
+    Console.WriteLine("Starting EchoServer (TCP) and UdpTimedSender...");
+    
+    // Використовуємо using для автоматичного виклику Dispose
+    using var server = new EchoServer(50000); 
+    using var udpSender = new UdpTimedSender("127.0.0.1", 60000); 
+    
+    udpSender.StartSending(100);
+    
+    // Сервер працює, поки не буде скасовано
+    await server.StartAsync(); 
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Критична помилка: {ex.Message}");
+}
+finally
+{
+    Console.WriteLine("EchoServer stopped.");
+}
+// -------------------------------------------------------------------
 
 namespace EchoServer
 {
-    public class EchoServer
+    // Додано IDisposable для виправлення Sonar S2930
+    public class EchoServer : IDisposable
     {
         private readonly int _port;
-        private TcpListener? _listener; // Змінено на nullable
-        private CancellationTokenSource _cancellationTokenSource;
+        // Змінено на nullable
+        private TcpListener? _listener; 
+        // Зроблено readonly для виправлення Sonar S2933
+        private readonly CancellationTokenSource _cancellationTokenSource; 
 
         //constuctor
         public EchoServer(int port)
@@ -33,7 +61,7 @@ namespace EchoServer
                     TcpClient client = await _listener.AcceptTcpClientAsync();
                     Console.WriteLine("Client connected.");
 
-                    // Оновлено: передаємо NetworkStream для обробки
+                    // РЕФАКТОРИНГ: Передаємо NetworkStream для тестування
                     _ = Task.Run(() => HandleClientAsync(client.GetStream(), _cancellationTokenSource.Token));
                 }
                 catch (ObjectDisposedException)
@@ -49,13 +77,13 @@ namespace EchoServer
         public void Stop()
         {
             _cancellationTokenSource.Cancel();
-            _listener?.Stop(); // Використовуємо ?.
+            _listener?.Stop(); 
         }
 
-        // Змінено на PUBLIC та приймає абстракцію Stream для тестування
+        // РЕФАКТОРИНГ: Змінено на PUBLIC та приймає абстракцію Stream для тестування
         public async Task HandleClientAsync(Stream stream, CancellationToken token)
         {
-            using (stream) // Використовуємо наданий Stream
+            using (stream) 
             {
                 byte[] buffer = new byte[1024];
                 int bytesRead;
@@ -86,8 +114,72 @@ namespace EchoServer
             }
             Console.WriteLine("Client disconnected.");
         }
+        
+        // РЕФАКТОРИНГ: Додано Dispose для IDisposable
+        public void Dispose()
+        {
+            Stop(); // Забезпечуємо зупинку
+            _cancellationTokenSource.Dispose();
+        }
     }
 
-    // Решта коду класу UdpTimedSender без змін
-    // ...
+    public class UdpTimedSender : IDisposable
+    {
+        private readonly string _host;
+        private readonly int _port;
+        private readonly UdpClient _udpClient;
+        private Timer? _timer; 
+
+        public UdpTimedSender(string host, int port)
+        {
+            _host = host;
+            _port = port;
+            _udpClient = new UdpClient();
+        }
+
+        public void StartSending(int intervalMilliseconds)
+        {
+            if (_timer != null)
+                throw new InvalidOperationException("Sender is already running.");
+
+            _timer = new Timer(SendMessageCallback, null, 0, intervalMilliseconds);
+        }
+
+        ushort i = 0;
+
+        private void SendMessageCallback(object? state)
+        {
+            try
+            {
+                //dummy data
+                Random rnd = new Random();
+                byte[] samples = new byte[1024];
+                rnd.NextBytes(samples);
+                i++;
+
+                // Змінено на явний масив для Concat
+                byte[] msg = (new byte[] { 0x04, 0x84 }).Concat(BitConverter.GetBytes(i)).Concat(samples).ToArray();
+                var endpoint = new IPEndPoint(IPAddress.Parse(_host), _port);
+
+                _udpClient.Send(msg, msg.Length, endpoint);
+                Console.WriteLine($"Message sent to {_host}:{_port} ");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error sending message: {ex.Message}");
+            }
+        }
+
+        public void StopSending()
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
+
+        public void Dispose()
+        {
+            StopSending();
+            _udpClient.Dispose();
+        }
+    }
 }
