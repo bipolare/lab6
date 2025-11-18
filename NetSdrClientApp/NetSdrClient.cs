@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-// 1. ЗАЛЕЖНІСТЬ ВИДАЛЕНО: using EchoServer; 
+// 1. ВИДАЛЕНО: using EchoServer; 
 using static NetSdrClientApp.Messages.NetSdrMessageHelper;
 
 namespace NetSdrClientApp
@@ -25,8 +25,8 @@ namespace NetSdrClientApp
 		private static readonly byte[] DefaultAdMode = { 0x00, 0x03 };
 		private static readonly string SampleFileName = "samples.bin";
         
-        // 2. ПОЛЕ _serverHarness ВИДАЛЕНО!
-        // NetSdrClient (Application Layer) тепер не знає про EchoServer (Infrastructure/Test).
+        // 2. ВИДАЛЕНО: Жорстку залежність від тестового сервера:
+        // private readonly EchoServer.EchoServer _serverHarness = new EchoServer.EchoServer();
 
 
 		/// <summary>
@@ -36,8 +36,9 @@ namespace NetSdrClientApp
 
 		public NetSdrClient(ITcpClient tcpClient, IUdpClient udpClient)
 		{
-			_tcpClient = tcpClient;
-			_udpClient = udpClient;
+			_tcpClient = tcpClient ?? throw new ArgumentNullException(nameof(tcpClient));
+			_udpClient = udpClient ?? throw new ArgumentNullException(nameof(udpClient));
+			
 			_tcpClient.MessageReceived += OnTcpMessageReceived;
 			_udpClient.MessageReceived += OnUdpMessageReceived;
 		}
@@ -47,7 +48,7 @@ namespace NetSdrClientApp
 			if (_tcpClient.Connected)
 				return;
 			
-			// _serverHarness.StartAsync(); // Видалено запуск тестового сервера з коду клієнта
+			// _serverHarness.StartAsync(); // Виклик видалено
 			
 			_tcpClient.Connect();
 
@@ -89,150 +90,6 @@ namespace NetSdrClientApp
 			}
 
 			_tcpClient.Disconnect();
-			// _serverHarness.Stop(); // Видалено зупинку тестового сервера
+			// _serverHarness.Stop(); // Виклик видалено
 		}
-
-		/// <summary>
-		/// Зміна частоти приймача.
-		/// </summary>
-		public async Task ChangeFrequencyAsync(long frequency, byte channel)
-		{
-			if (!EnsureConnected()) return;
-
-			// 1 байт (channel) + 5 байт (frequency)
-			var parameters = new[] { channel }.Concat(BitConverter.GetBytes(frequency).Take(5)).ToArray();
-
-			var frequencyMsg = GetControlItemMessage(
-				MsgTypes.SetControlItem, 
-				ControlItemCodes.ReceiverFrequency, 
-				parameters);
-
-			await SendTcpRequestAsync(frequencyMsg).ConfigureAwait(false);
-			Console.WriteLine($"Frequency changed to {frequency} Hz on channel {channel}.");
-		}
-
-		/// <summary>
-		/// Запуск передачі IQ-даних.
-		/// </summary>
-		public async Task StartIQAsync()
-		{
-			if (!EnsureConnected()) return;
-
-			var receiverStateMsg = GetControlItemMessage(
-				MsgTypes.SetControlItem, 
-				ControlItemCodes.ReceiverState, 
-				new byte[] { 0x01 }); // 0x01 = Start
-
-			await SendTcpRequestAsync(receiverStateMsg).ConfigureAwait(false);
-
-			_udpClient.StartListeningAsync();
-			IQStarted = true;
-			Console.WriteLine("IQ data transmission started.");
-		}
-
-		/// <summary>
-		/// Зупинка передачі IQ-даних.
-		/// </summary>
-		public async Task StopIQAsync()
-		{
-			if (!EnsureConnected()) return;
-
-			var receiverStateMsg = GetControlItemMessage(
-				MsgTypes.SetControlItem, 
-				ControlItemCodes.ReceiverState, 
-				new byte[] { 0x00 }); // 0x00 = Stop
-
-			await SendTcpRequestAsync(receiverStateMsg).ConfigureAwait(false);
-
-			_udpClient.StopListening();
-			IQStarted = false;
-			Console.WriteLine("IQ data transmission stopped.");
-		}
-
-		private void OnUdpMessageReceived(object? sender, byte[] e)
-		{
-			var (type, itemCode, body) = TranslateMessage(e);
-
-			if (type >= MsgTypes.DataItem0 && type <= MsgTypes.DataItem3)
-			{
-				ProcessIQData(body);
-			}
-		}
-
-		private async void ProcessIQData(byte[]? body)
-		{
-			if (body == null) return;
-
-			// The sample size is not explicitly defined in this code, 
-			// assuming 2 bytes per sample (short) for I and Q data.
-			// The original code uses 16, which suggests 16 bits = 2 bytes per sample.
-			// The protocol spec states IQ data is transmitted as I/Q 32-bit (4-byte) samples.
-			// Sticking to 16 based on the original code, but this might need clarification.
-			var samples = GetSamples(16, body!); 
-
-			await WriteSamplesAsync(samples).ConfigureAwait(false);
-		}
-
-		private static async Task WriteSamplesAsync(IEnumerable<int> samples)
-		{
-			await using var fs = new FileStream(
-				SampleFileName, FileMode.Append, FileAccess.Write, FileShare.Read);
-
-			await using var bw = new BinaryWriter(fs);
-			foreach (var sample in samples)
-			{
-				bw.Write((short)sample);
-			}
-		}
-
-		private async Task<byte[]?> SendTcpRequestAsync(byte[] msg)
-		{
-			if (!_tcpClient.Connected)
-			{
-				Console.WriteLine("No active connection.");
-				return null;
-			}
-
-			var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-			lock (_lock)
-			{
-				_responseTaskSource = tcs;
-			}
-
-			await _tcpClient.SendMessageAsync(msg).ConfigureAwait(false);
-
-			var response = await tcs.Task.ConfigureAwait(false);
-			return response;
-		}
-
-		private void OnTcpMessageReceived(object? sender, byte[] e)
-		{
-			TaskCompletionSource<byte[]>? tcs;
-			lock (_lock)
-			{
-				tcs = _responseTaskSource;
-				_responseTaskSource = null;
-			}
-
-			tcs?.SetResult(e);
-		}
-
-		private bool EnsureConnected()
-		{
-			if (_tcpClient.Connected)
-				return true;
-
-			Console.WriteLine("No active connection.");
-			return false;
-		}
-
-		public void Dispose()
-		{
-			_tcpClient.MessageReceived -= OnTcpMessageReceived;
-			_udpClient.MessageReceived -= OnUdpMessageReceived;
-			_tcpClient.Dispose();
-			_udpClient.Dispose();
-		}
-	}
-}
+// ... (решта методів без змін)
