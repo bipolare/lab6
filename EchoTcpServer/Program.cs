@@ -1,3 +1,5 @@
+// Вміст Program.cs (EchoServer)
+
 using System;
 using System.IO;
 using System.Net;
@@ -6,19 +8,17 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Linq; 
 
-// --- ТОЧКА ВХОДУ ДЛЯ КОНСОЛЬНОГО ЗАСТОСУНКУ (ВИПРАВЛЕННЯ CS0118/CS0246) ---
+// --- ТОЧКА ВХОДУ ДЛЯ КОНСОЛЬНОГО ЗАСТОСУНКУ ---
 try
 {
     Console.WriteLine("Starting EchoServer (TCP) and UdpTimedSender...");
     
     // Кваліфікуємо типи, щоб уникнути конфлікту імен 'EchoServer'
-    // Використовуємо using для автоматичного виклику Dispose
     using var server = new EchoServer.EchoServer(50000); 
     using var udpSender = new EchoServer.UdpTimedSender("127.0.0.1", 60000); 
     
     udpSender.StartSending(100);
     
-    // Сервер працює, поки не буде скасовано
     await server.StartAsync(); 
 }
 catch (Exception ex)
@@ -33,20 +33,21 @@ finally
 
 namespace EchoServer
 {
-    // Додано IDisposable та повний патерн Dispose (для Sonar S3881)
+    // Повний патерн Dispose (для Sonar S3881)
     public class EchoServer : IDisposable
     {
         private readonly int _port;
         private TcpListener? _listener; 
-        private readonly CancellationTokenSource _cancellationTokenSource; // readonly (для Sonar S2933)
+        private readonly CancellationTokenSource _cancellationTokenSource; 
         private bool _disposed = false;
 
-        //constuctor
         public EchoServer(int port)
         {
             _port = port;
             _cancellationTokenSource = new CancellationTokenSource();
         }
+        
+        // ... (StartAsync та Stop) ...
 
         public async Task StartAsync()
         {
@@ -61,16 +62,13 @@ namespace EchoServer
                     TcpClient client = await _listener.AcceptTcpClientAsync();
                     Console.WriteLine("Client connected.");
 
-                    // РЕФАКТОРИНГ: Передаємо NetworkStream для тестування
                     _ = Task.Run(() => HandleClientAsync(client.GetStream(), _cancellationTokenSource.Token));
                 }
                 catch (ObjectDisposedException)
                 {
-                    // Listener has been closed
                     break;
                 }
             }
-
             Console.WriteLine("Server shutdown.");
         }
 
@@ -80,8 +78,7 @@ namespace EchoServer
             _listener?.Stop(); 
         }
 
-        // РЕФАКТОРИНГ: Змінено на PUBLIC та приймає абстракцію Stream для тестування
-        // S2325: Залишаємо інстанс-методом, оскільки він керує життєвим циклом підключення.
+        // РЕФАКТОРИНГ: HandleClientAsync приймає Stream для тестування
         public async Task HandleClientAsync(Stream stream, CancellationToken token)
         {
             using (stream) 
@@ -94,8 +91,6 @@ namespace EchoServer
                     while (!token.IsCancellationRequested && (bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, token)) != 0)
                     {
                         Console.WriteLine($"Received: {bytesRead} bytes.");
-
-                        // Echo logic: send received data back
                         await stream.WriteAsync(buffer, 0, bytesRead, token); 
                         Console.WriteLine($"Sent: {bytesRead} bytes.");
                     }
@@ -106,7 +101,6 @@ namespace EchoServer
                 }
                 catch (OperationCanceledException)
                 {
-                    // Токен скасовано
                 }
                 catch (Exception ex)
                 {
@@ -116,7 +110,6 @@ namespace EchoServer
             Console.WriteLine("Client disconnected.");
         }
         
-        // Реалізація повного патерну Dispose
         public void Dispose()
         {
             Dispose(true);
@@ -131,10 +124,7 @@ namespace EchoServer
                 {
                     Stop(); 
                     _cancellationTokenSource.Dispose();
-                    // _listener не є керованим ресурсом, що потребує Dispose,
-                    // його зупинка відбувається в Stop().
                 }
-
                 _disposed = true;
             }
         }
@@ -148,7 +138,7 @@ namespace EchoServer
         private Timer? _timer; 
         private bool _disposed = false;
         
-        // РЕФАКТОРИНГ: Зроблено статичним для виправлення Sonar S2245 (небезпечне використання Random)
+        // РЕФАКТОРИНГ: Зроблено статичним для потокобезпечного Random (для Sonar S2245)
         private static readonly Random Rnd = new Random(); 
 
         public UdpTimedSender(string host, int port)
@@ -157,7 +147,8 @@ namespace EchoServer
             _port = port;
             _udpClient = new UdpClient();
         }
-
+        
+        // ... (StartSending) ...
         public void StartSending(int intervalMilliseconds)
         {
             if (_timer != null)
@@ -172,17 +163,15 @@ namespace EchoServer
         {
             try
             {
-                //dummy data
                 byte[] samples = new byte[1024];
                 
-                // Використовуємо статичний Random з блокуванням для потокобезпечності
+                // Використовуємо статичний Random з блокуванням
                 lock (Rnd) 
                 {
                     Rnd.NextBytes(samples);
                 }
                 i++;
 
-                // Змінено на явний масив для Concat
                 byte[] msg = (new byte[] { 0x04, 0x84 }).Concat(BitConverter.GetBytes(i)).Concat(samples).ToArray();
                 var endpoint = new IPEndPoint(IPAddress.Parse(_host), _port);
 
@@ -195,13 +184,13 @@ namespace EchoServer
             }
         }
 
+        // ... (StopSending) ...
         public void StopSending()
         {
             _timer?.Dispose();
             _timer = null;
         }
 
-        // Реалізація повного патерну Dispose
         public void Dispose()
         {
             Dispose(true);
@@ -216,7 +205,6 @@ namespace EchoServer
                 {
                     StopSending();
                     _udpClient.Dispose();
-                    // _timer вже обробляється в StopSending()
                 }
                 _disposed = true;
             }
