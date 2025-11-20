@@ -1,10 +1,17 @@
-﻿
-public interface IUdpClient
+using System; // Required for IDisposable
+using System.Threading.Tasks;
+
+namespace NetSdrClientApp.Networking
 {
-    event EventHandler<byte[]>? MessageReceived;
+    // Inherit from IDisposable to enable the .Dispose() method 
+    // for clean resource shutdown.
+    public interface IUdpClient : IDisposable
+    {
+        event EventHandler<byte[]>? MessageReceived;
 
-    Task StartListeningAsync();
+        Task StartListeningAsync();
 
-    void StopListening();
-    void Exit();
+        void StopListening();
+        void Exit();
+    }
 }
