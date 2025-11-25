@@ -17,11 +17,11 @@
 #
 # 3. Follow the SonarCloud in-product tutorial
 #     * a. Copy/paste the Project Key and the Organization Key into the args parameter below
-#          (You'll find this information in SonarCloud. Click on "Information" at the bottom left)
+#           (You'll find this information in SonarCloud. Click on "Information" at the bottom left)
 #
 #     * b. Generate a new token and add it to your Github repository's secrets using the name SONAR_TOKEN
-#          (On SonarCloud, click on your avatar on top-right > My account > Security
-#           or go directly to https://sonarcloud.io/account/security/)
+#           (On SonarCloud, click on your avatar on top-right > My account > Security
+#            or go directly to https://sonarcloud.io/account/security/)
 
 # Feel free to take a look at our documentation (https://docs.sonarcloud.io/getting-started/github/)
 # or reach out to our community forum if you need some help (https://community.sonarsource.com/c/help/sc/9)
@@ -41,7 +41,7 @@ permissions:
 jobs:
   sonar-check:
     name: Sonar Check
-    runs-on: windows-latest   # безпечно для будь-яких .NET проектів
+    runs-on: windows-latest   # безпечно для будь-яких .NET проектів
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -55,11 +55,12 @@ jobs:
         run: |
           dotnet tool install --global dotnet-sonarscanner
           echo "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+          # Увага: переконайтеся, що ви використовуєте правильні шляхи до звітів покриття
           dotnet sonarscanner begin `
           /k:"bipolare_lab2" `
           /o:"bipolare" `
           /d:sonar.token="${{ secrets.SONAR_TOKEN }}" `
-          /d:sonar.cs.opencover.reportsPaths="**/coverage.xml" `
+          /d:sonar.cs.opencover.reportsPaths="**/coverage.xml,**/coverage_EchoServer.xml" ` # ОБ'ЄДНАННЯ ЗВІТІВ
           /d:sonar.cpd.cs.minimumTokens=40 `
           /d:sonar.cpd.cs.minimumLines=5 `
           /d:sonar.exclusions=**/bin/**,**/obj/**,**/sonarcloud.yml `
@@ -70,13 +71,22 @@ jobs:
         run: dotnet restore NetSdrClient.sln
       - name: Build
         run: dotnet build NetSdrClient.sln -c Release --no-restore
+        
       - name: Tests with coverage (OpenCover)
         run: |
+          # 1. Тести для NetSdrClientAppTests
           dotnet test NetSdrClientAppTests/NetSdrClientAppTests.csproj -c Release --no-build `
             /p:CollectCoverage=true `
             /p:CoverletOutput=TestResults/coverage.xml `
             /p:CoverletOutputFormat=opencover
+          
+          # 2. Тести для EchoServer.Tests (з іншою назвою файлу звіту)
+          dotnet test EchoTspServer.Tests/EchoServer.Tests.csproj -c Release --no-build `
+            /p:CollectCoverage=true `
+            /p:CoverletOutput=TestResults/coverage_EchoServer.xml `
+            /p:CoverletOutputFormat=opencover  
         shell: pwsh
+      
       # 3) END: SonarScanner
       - name: SonarScanner End
         run: dotnet sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
